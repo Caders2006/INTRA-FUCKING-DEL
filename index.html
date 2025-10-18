@@ -2041,7 +2041,7 @@ let ai_pipeline = null;
 
 /* Storage + Accounts */
 function initializeUserAccounts(){
-  let users = JSON.parse(localStorage.getItem('intradelUsers') || '{}');
+  let users = safeJsonParse(localStorage.getItem('intradelUsers')) || {};
   if(!users[ADMIN_EMAIL]) {
       users[ADMIN_EMAIL] = { name: 'INTRADEL', email: ADMIN_EMAIL, password: 'INTRADEL', createdAt: new Date().toISOString(), lastLogin: new Date().toISOString(), isBanned: false, subscription: 'Elite', usernameLastChanged: null };
       localStorage.setItem('intradelUsers', JSON.stringify(users));
@@ -2053,14 +2053,21 @@ function initializeUserAccounts(){
   if(!localStorage.getItem('intradelMutedUsers')) localStorage.setItem('intradelMutedUsers', JSON.stringify({}));
   if(!localStorage.getItem('intradelDms')) localStorage.setItem('intradelDms', JSON.stringify({}));
 }
-function getAllUsers(){ return JSON.parse(localStorage.getItem('intradelUsers') || '{}'); }
-function getAllUserData(){ return JSON.parse(localStorage.getItem('intradelUserData') || '{}'); }
-function getActivityLog(){ return JSON.parse(localStorage.getItem('intradelActivityLog') || '[]'); }
-function getMutedUsers() { return JSON.parse(localStorage.getItem('intradelMutedUsers') || '{}'); }
+function safeJsonParse(str, dflt = null) {
+    try {
+        return JSON.parse(str);
+    } catch (e) {
+        return dflt;
+    }
+}
+function getAllUsers(){ return safeJsonParse(localStorage.getItem('intradelUsers'), {}); }
+function getAllUserData(){ return safeJsonParse(localStorage.getItem('intradelUserData'), {}); }
+function getActivityLog(){ return safeJsonParse(localStorage.getItem('intradelActivityLog'), []); }
+function getMutedUsers() { return safeJsonParse(localStorage.getItem('intradelMutedUsers'), {}); }
 function saveMutedUsers(muted) { localStorage.setItem('intradelMutedUsers', JSON.stringify(muted)); }
-function getAllDms() { return JSON.parse(localStorage.getItem('intradelDms') || '{}'); }
+function getAllDms() { return safeJsonParse(localStorage.getItem('intradelDms'), {}); }
 function saveAllDms(dms) { localStorage.setItem('intradelDms', JSON.stringify(dms)); }
-function getAnnouncements() { return JSON.parse(localStorage.getItem('intradelAnnouncements') || '[]'); }
+function getAnnouncements() { return safeJsonParse(localStorage.getItem('intradelAnnouncements'), []); }
 function saveAnnouncements(ann) { localStorage.setItem('intradelAnnouncements', JSON.stringify(ann)); }
 
 function addActivityLog(message){
@@ -2102,23 +2109,13 @@ function loadUserData(email) {
 
     try {
         const allUserData = getAllUserData();
-        const userDataString = allUserData[email]; // This is a string from the object property
+        let userData = allUserData[email];
 
-        if (!userDataString) {
-             // If the user has an account but no data entry, create one.
+        if (!userData) {
             saveUserData(email, defaultData);
             return defaultData;
         }
         
-        let userData;
-        // The data might be a stringified JSON or already an object from previous bad saves.
-        if (typeof userDataString === 'string') {
-            userData = JSON.parse(userDataString);
-        } else {
-            userData = userDataString;
-        }
-
-        // **ROBUST MIGRATION AND VALIDATION**
         if (typeof userData !== 'object' || userData === null) {
             console.warn("Corrupted user data object found. Resetting to default.");
             saveUserData(email, defaultData);
@@ -2126,23 +2123,19 @@ function loadUserData(email) {
         }
         
         let wasModified = false;
-        // Data Migration: Remove deprecated `dailyPnL` property
         if (userData.hasOwnProperty('dailyPnL')) {
             delete userData.dailyPnL;
             wasModified = true;
         }
 
-        // Ensure `trades` is an array
         if (!Array.isArray(userData.trades)) {
             userData.trades = [];
             wasModified = true;
         }
 
-        // Ensure `profile` and `colors` objects exist and have default properties
         userData.profile = Object.assign({}, defaultData.profile, userData.profile);
         userData.colors = Object.assign({}, defaultData.colors, userData.colors);
         
-        // If we cleaned up the data, save it back
         if(wasModified) {
             saveUserData(email, userData);
         }
@@ -2151,14 +2144,13 @@ function loadUserData(email) {
 
     } catch (error) {
         console.error("CRITICAL: Error loading user data. Resetting to default to prevent crash.", error);
-        // If anything goes wrong, return a clean default object to ensure the app doesn't crash.
         saveUserData(email, defaultData);
         return defaultData;
     }
 }
 
 function saveRemembered(creds){ localStorage.setItem('intradelRemember', JSON.stringify(creds)); }
-function loadRemembered(){ try { return JSON.parse(localStorage.getItem('intradelRemember') || 'null'); } catch(e){ return null; } }
+function loadRemembered(){ return safeJsonParse(localStorage.getItem('intradelRemember')); }
 function clearRemembered(){ localStorage.removeItem('intradelRemember'); }
 
 function showNotification(msg){
@@ -2360,6 +2352,7 @@ function updateUI(){
 function logout(){
   if(currentUser) saveUserData(currentUser.email, buildUserData());
   if (forumPollingInterval) clearInterval(forumPollingInterval);
+  forumPollingInterval = null;
   currentUser = null;
   trades = [];
   userProfile = { avatarData:null, mindfulnessJournal: '', isPublic: true, friends: [], friendRequests: [] };
@@ -3247,7 +3240,7 @@ function startForumPolling() {
     }, 2500);
 }
 function loadForumMessages() {
-    return JSON.parse(localStorage.getItem('intradelForumMessages') || '[]');
+    return safeJsonParse(localStorage.getItem('intradelForumMessages'), []);
 }
 function saveForumMessages(messages) {
     localStorage.setItem('intradelForumMessages', JSON.stringify(messages));
@@ -3815,10 +3808,12 @@ function applyUserColors(colors){
 document.addEventListener('DOMContentLoaded', () => {
   initializeUserAccounts();
   initializeSoundscapes();
-  loadTheme(); // Load theme first
-  tryAutoLogin(); // Then autologin which might load user colors
-  updateUI(); // Initial UI state
-  clearJournalForm(); // Set default date
+  loadTheme();
+  updateUI();
+  clearJournalForm();
+  initBackgroundCanvas();
+  initHomepageAnimations();
+  tryAutoLogin();
 
   // Header nav
   on('logo','click', () => { if (currentUser) { showPage('dashboard'); switchToTab('dashboard'); } else { showPage('home'); } });
@@ -4033,8 +4028,6 @@ document.addEventListener('DOMContentLoaded', () => {
   on('cancelDeleteBtn','click', cancelDelete);
   on('confirmDeleteBtn','click', confirmDelete);
 
-  initBackgroundCanvas();
-  initHomepageAnimations();
 });
 
 /* ZEN Page Features */
@@ -4043,7 +4036,7 @@ const soundscapes = {};
 function initializeSoundscapes() {
     // Short, loopable base64 audio files.
     const sounds = {
-        rain: 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjQ1LjEwMAAAAAAAAAAAAAAA//tAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB1cHJvY2Vzc2VkIGJ5IG1wM2RpYWcgdjEuMTIgKGh0dHA6Ly9tcDNkaWFnLm1hZ25vLml0KQCrgAAAAAAB9AAAKgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//tAwBMAAAAAAABQoAAAAAAAAAABEwVVIuAAgEAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA//tAwBLAAAACAAADSAAAAAPAERAIAgICAoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tá',
+        rain: 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjQ1LjEwMAAAAAAAAAAAAAAA//tAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB1cHJvY2Vzc2VkIGJ5IG1wM2RpYWcgdjEuMTIgKGh0dHA6Ly9tcDNkaWFnLm1hZ25vLml0KQCrgAAAAAAB9AAAKgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//tAwBMAAAAAAABQoAAAAAAAAAABEwVVIuAAgEAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA//tAwBLAAAACAAADSAAAAAPAERAIAgICAoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//t-AwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tá',
         forest: 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjQ1LjEwMAAAAAAAAAAAAAAA//tAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB1cHJvY2Vzc2VkIGJ5IG1wM2RpYWcgdjEuMTIgKGh0dHA6Ly9tcDNkaWFnLm1hZ25vLml0KQCrgAAAAAAB9AAAKgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//tAwBMAAAAAAABQoAAAAAAAAAABEwVVIuAAgEAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA//tAwBLAAAACAAADSAAAAAPAERAIAgICAoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tá',
         waves: 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjQ1LjEwMAAAAAAAAAAAAAAA//tAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB1cHJvY2Vzc2VkIGJ5IG1wM2RpYWcgdjEuMTIgKGh0dHA6Ly9tcDNkaWFnLm1hZ25vLml0KQCrgAAAAAAB9AAAKgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//tAwBMAAAAAAABQoAAAAAAAAAABEwVVIuAAgEAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA//tAwBLAAAACAAADSAAAAAPAERAIAgICAoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tAwBIAAABCAAADSAAAAAPcBAQCAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK//tá'
     };
@@ -4191,4 +4184,13 @@ function initHomepageAnimations() {
     // Scroll-triggered animations for sections
     const sections = document.querySelectorAll('#homePage .home-section');
     const sectionObserver = new IntersectionObserver((entries, observer) => {
-        
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.add('is-visible');
+            }
+        });
+    }, { threshold: 0.1 });
+    sections.forEach(section => sectionObserver.observe(section));
+
+    // Homepage Color Customization Demo
+    const mockColorCard = $('mockup
